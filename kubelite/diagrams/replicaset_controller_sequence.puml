@@ -1,0 +1,66 @@
+@startuml ReplicaSet Controller Flow
+
+participant ReplicaSetController
+participant ReplicaSetRegistry
+participant PodRegistry
+database ETCD
+
+== Controller Loop ==
+loop Every 1 second
+    ReplicaSetController -> ReplicaSetRegistry: List() ReplicaSets
+    activate ReplicaSetRegistry
+    ReplicaSetRegistry -> ETCD: Get ReplicaSets
+    ETCD --> ReplicaSetRegistry: ReplicaSets
+    ReplicaSetRegistry --> ReplicaSetController: ReplicaSets
+    deactivate ReplicaSetRegistry
+
+    loop For each ReplicaSet
+        ReplicaSetController -> ReplicaSetController: Reconcile(rs)
+        activate ReplicaSetController
+
+        ReplicaSetController -> ReplicaSetRegistry: Get(rs.Name)
+        activate ReplicaSetRegistry
+        ReplicaSetRegistry -> ETCD: Get Current State
+        ETCD --> ReplicaSetRegistry: Current ReplicaSet
+        ReplicaSetRegistry --> ReplicaSetController: Current ReplicaSet
+        deactivate ReplicaSetRegistry
+
+        ReplicaSetController -> PodRegistry: ListPods()
+        activate PodRegistry
+        PodRegistry -> ETCD: Get All Pods
+        ETCD --> PodRegistry: Pods
+        PodRegistry --> ReplicaSetController: Pods
+        deactivate PodRegistry
+
+        ReplicaSetController -> ReplicaSetController: getPodsForReplicaSet()
+        note right: Filter active pods owned by ReplicaSet
+
+        alt currentPods < desiredReplicas
+            loop For each missing replica
+                ReplicaSetController -> PodRegistry: CreatePod()
+                activate PodRegistry
+                PodRegistry -> ETCD: Store New Pod
+                PodRegistry --> ReplicaSetController: Success
+                deactivate PodRegistry
+            end
+
+            ReplicaSetController -> ReplicaSetRegistry: Update Status
+            activate ReplicaSetRegistry
+            ReplicaSetRegistry -> ETCD: Update ReplicaSet
+            ReplicaSetRegistry --> ReplicaSetController: Success
+            deactivate ReplicaSetRegistry
+
+        else currentPods > desiredReplicas
+            note right: TODO: Implement pod deletion
+            ReplicaSetController -> ReplicaSetRegistry: Update Status
+            activate ReplicaSetRegistry
+            ReplicaSetRegistry -> ETCD: Update ReplicaSet
+            ReplicaSetRegistry --> ReplicaSetController: Success
+            deactivate ReplicaSetRegistry
+        end
+
+        deactivate ReplicaSetController
+    end
+end
+
+@enduml

@@ -1,0 +1,6 @@
+// Standalone: talks to a real embedded ZooKeeper, not to other litesystems.
+// ZooKeeper is deliberately real — it *is* the Consistent Core being taught.
+dependencies {
+    implementation 'org.apache.zookeeper:zookeeper:3.5.5'
+    implementation 'com.101tec:zkclient:0.11'
+}

@@ -1,0 +1,80 @@
+@startuml
+skinparam sequenceGroupBodyBackgroundColor transparent
+skinparam ParticipantPadding 20
+skinparam BoxPadding 10
+
+box "Client Components" #LightBlue
+participant Client
+participant "Event\nChannel" as Channel
+end box
+
+box "ListWatch Component" #LightGreen
+participant ListWatch
+participant "ListWatch\nLoop" as Loop
+end box
+
+box "External Service" #LightGray
+participant "etcd\nClient" as Etcd
+end box
+
+Client -> ListWatch: ListAndWatch(ctx)
+activate ListWatch
+
+group #Gold "Initialization Phase"
+    ListWatch -> ListWatch: create buffered channel
+    ListWatch -> ListWatch: create done channel
+    ListWatch -> ListWatch: create watch context
+    
+    ListWatch -> Loop: start runListWatchLoop\n(watchCtx, ch, done)
+    activate Loop
+    
+    Loop -> Loop: ensureConnected()
+    activate Loop
+    Loop -> Etcd: create etcd client
+    deactivate Loop
+end
+
+group #LightCoral "List Phase"
+    Loop -> Loop: listAndSendExisting()
+    activate Loop
+    Loop -> Etcd: Get(prefix)
+    Etcd --> Loop: existing keys
+    Loop -> Channel: send Added events
+    deactivate Loop
+end
+
+group #LightGreen "Watch Phase"
+    Loop -> Loop: watchAndForwardEvents()
+    activate Loop
+    Loop -> Etcd: Watch(prefix)
+    activate Etcd
+
+    group "Event Processing Loop" #White
+        alt #PaleGreen "Normal Event Flow"
+            Etcd --> Loop: event
+            Loop -> Channel: forward event
+        else #Pink "Error Handling: Channel Closed"
+            Etcd --> Loop: channel closed
+            Loop -> Channel: send error event
+            Loop -> Loop: retry with backoff
+        else #Pink "Error Handling: Context Cancelled"
+            Loop -> Channel: send error event
+            Loop -> Loop: cleanup
+        end
+    end
+
+    deactivate Etcd
+    deactivate Loop
+end
+
+ListWatch --> Client: return (eventCh, cancelFunc)
+deactivate ListWatch
+
+note right of Client #LightBlue
+    cancelFunc will:
+    1. Cancel watch context
+    2. Wait for cleanup
+    3. Close channels
+end note
+
+@enduml

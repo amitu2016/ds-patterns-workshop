@@ -1,0 +1,54 @@
+allprojects {
+    group = 'io.litesystems'
+    version = '0.1.0-SNAPSHOT'
+    repositories {
+        mavenLocal()          // latest tickloom is published locally
+        mavenCentral()
+        // tickloom-testkit's linearizability checker pulls jepsen:jepsen, which is
+        // published to Clojars (a Clojure lib), not Maven Central.
+        maven { url = 'https://repo.clojars.org' }
+    }
+}
+
+subprojects {
+    apply plugin: 'java'
+
+    java {
+        toolchain { languageVersion = JavaLanguageVersion.of(21) }
+    }
+
+    dependencies {
+        implementation "io.github.unmeshjoshi:tickloom:${tickloomVersion}"
+        testImplementation "io.github.unmeshjoshi:tickloom-testkit:${tickloomVersion}"
+        testImplementation platform("org.junit:junit-bom:${junitVersion}")
+        testImplementation "org.junit.jupiter:junit-jupiter"
+        testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+
+        // Jackson modules tickloom's codec needs for record/constructor binding
+        implementation 'org.slf4j:slf4j-api:2.0.16'
+        implementation 'com.fasterxml.jackson.datatype:jackson-datatype-jdk8:2.17.0'
+        implementation 'com.fasterxml.jackson.module:jackson-module-parameter-names:2.17.0'
+    }
+
+    // Jackson binds records/constructors by parameter name.
+    compileJava { options.compilerArgs << '-parameters' }
+    compileTestJava { options.compilerArgs << '-parameters' }
+
+    // Shared logging config — demos must stay readable on a screen share (see config/logging).
+    sourceSets.test.resources.srcDir rootProject.file('config/logging')
+
+    test {
+        useJUnitPlatform()
+        // Demos must never replay a cached result. Change a TRY IT constant, re-run,
+        // and you must see the new behaviour — not Gradle's memory of the old one.
+        // (The Go side gets this from -count=1 in the Makefile.)
+        outputs.upToDateWhen { false }
+        // Demos narrate. Never swallow their output.
+        testLogging {
+            showStandardStreams = true
+            events 'passed', 'failed', 'skipped'
+            exceptionFormat = 'full'
+        }
+    }
+}
+

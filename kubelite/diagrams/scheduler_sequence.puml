@@ -1,0 +1,53 @@
+@startuml Scheduler Flow
+
+participant Scheduler
+participant PodRegistry
+participant NodeRegistry
+database ETCD
+
+== Scheduling Loop ==
+loop Every schedulingRate (default 10s)
+    Scheduler -> Scheduler: schedulePendingPods()
+    activate Scheduler
+
+    Scheduler -> PodRegistry: ListPendingPods()
+    activate PodRegistry
+    PodRegistry -> ETCD: Get Pending Pods
+    ETCD --> PodRegistry: Pending Pods List
+    PodRegistry --> Scheduler: Pending Pods
+    deactivate PodRegistry
+
+    Scheduler -> NodeRegistry: ListNodes()
+    activate NodeRegistry
+    NodeRegistry -> ETCD: Get Available Nodes
+    ETCD --> NodeRegistry: Nodes List
+    NodeRegistry --> Scheduler: Available Nodes
+    deactivate NodeRegistry
+
+    alt No nodes available
+        Scheduler -> Scheduler: Return error
+    else Nodes available
+        loop For each pending pod
+            Scheduler -> Scheduler: Select Random Node
+            note right: TODO: Implement better\nnode selection policy
+
+            Scheduler -> PodRegistry: UpdatePod()
+            activate PodRegistry
+            note right
+                Update pod with:
+                - NodeName
+                - Status = PodScheduled
+            end note
+            PodRegistry -> ETCD: Store Updated Pod
+            ETCD --> PodRegistry: Success
+            PodRegistry --> Scheduler: Success
+            deactivate PodRegistry
+
+            Scheduler -> Scheduler: Log scheduling decision
+        end
+    end
+
+    deactivate Scheduler
+end
+
+@enduml

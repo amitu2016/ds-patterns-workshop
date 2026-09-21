@@ -1,0 +1,35 @@
+<!--
+  Shared across every system: demos must be readable on a screen share.
+
+  ZooKeeper and etcd clients log at DEBUG by default and will bury a demo's narrative
+  under hundreds of lines. Demos print the story; the infrastructure stays quiet unless
+  something is actually wrong.
+
+  Raise a logger to DEBUG temporarily when you want to show the wire traffic itself.
+-->
+<configuration>
+    <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%-5level %logger{0} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- Infrastructure: quiet. -->
+    <logger name="org.apache.zookeeper" level="WARN"/>
+    <logger name="org.I0Itec.zkclient" level="WARN"/>
+    <logger name="io.etcd" level="WARN"/>
+    <logger name="io.grpc" level="WARN"/>
+    <logger name="org.apache.hadoop" level="ERROR"/>  <!-- NativeCodeLoader warns on every run; irrelevant here -->
+    <logger name="org.apache.parquet" level="WARN"/>
+    <logger name="com.tickloom" level="WARN"/>
+
+    <!-- Our own model code: raise to DEBUG to show ZooKeeper/wire detail on demand. -->
+    <logger name="kafkalite" level="INFO"/>
+    <logger name="objectstorelite" level="INFO"/>
+    <logger name="sparklite" level="INFO"/>
+    <logger name="cassandralite" level="INFO"/>
+
+    <root level="WARN">
+        <appender-ref ref="STDOUT"/>
+    </root>
+</configuration>

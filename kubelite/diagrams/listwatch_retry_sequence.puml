@@ -1,0 +1,130 @@
+@startuml
+!define DARK_BLUE #1A237E
+!define LIGHT_BLUE #E8EAF6
+!define DARK_TEAL #004D40
+!define LIGHT_TEAL #E0F2F1
+!define DARK_AMBER #FF6F00
+!define LIGHT_AMBER #FFF8E1
+!define DARK_RED #B71C1C
+!define LIGHT_RED #FFEBEE
+!define DARK_PURPLE #311B92
+!define LIGHT_PURPLE #EDE7F6
+
+skinparam {
+    SequenceGroupBodyBackgroundColor transparent
+    ParticipantPadding 20
+    BoxPadding 10
+    DefaultFontSize 13
+    DefaultFontStyle bold
+    
+    NoteBorderColor DARK_BLUE
+    NoteBackgroundColor LIGHT_BLUE
+    NoteFontColor DARK_BLUE
+    
+    SequenceLifeLineBorderColor DARK_BLUE
+    SequenceGroupBorderColor DARK_BLUE
+    
+    ParticipantBorderColor DARK_BLUE
+    ParticipantBackgroundColor LIGHT_BLUE
+    ParticipantFontColor DARK_BLUE
+    
+    ArrowColor DARK_PURPLE
+    
+    BoxBorderColor DARK_BLUE
+    BoxBackgroundColor transparent
+}
+
+title Event Consistency Through List-Then-Watch Pattern
+
+box "Client Layer" LIGHT_PURPLE
+participant "Client" as Client
+participant "Event\nChannel" as Channel
+end box
+
+box "Application Layer" LIGHT_TEAL
+participant "ListWatch" as ListWatch
+participant "ListWatch\nLoop" as Loop
+end box
+
+box "Storage Layer" LIGHT_BLUE
+participant "etcd\nClient" as Etcd
+participant "etcd\nData" as Data
+end box
+
+note across LIGHT_BLUE
+    <b>Event Consistency Strategy
+    1. List operation returns all key-values and current revision
+    2. Watch starts from the listed revision
+    3. This ensures no events are missed between List and Watch
+end note
+
+Client -> ListWatch: ListAndWatch(ctx)
+activate ListWatch
+
+group "Initial Connection" LIGHT_TEAL
+    ListWatch -> Loop: start runListWatchLoop
+    activate Loop
+    Loop -> Etcd: connect
+    activate Etcd
+end
+
+group "First Watch Cycle" LIGHT_TEAL
+    note over Loop, Data
+        List returns both key-values 
+        and current revision in response
+    end note
+    Loop -> Etcd: Get(prefix)
+    Etcd -> Data: read key-values
+    Data --> Etcd: key-values + rev=100
+    Etcd --> Loop: Response[Header:rev=100, kvs:(key1,val1),(key2,val2)]
+    Loop -> Channel: send Added events
+    
+    note over Loop, Data
+        Watch from revision in List response
+        to ensure no missed events
+    end note
+    Loop -> Etcd: Watch(prefix, rev=100)
+    Etcd --> Loop: watch stream established
+end
+
+group "Connection Failure" LIGHT_RED
+    Data -> Data: key updates (rev=101,102)
+    Etcd -> Loop: connection lost
+    deactivate Etcd
+    Loop -> Channel: send error event
+    Loop -> Loop: sleep(retryDelay)
+end
+
+group "Retry With Event Consistency" LIGHT_AMBER
+    Loop -> Loop: ensureConnected()
+    Loop -> Etcd: connect
+    activate Etcd
+    
+    note over Loop, Data
+        List again to:
+        1. Get all current key-values
+        2. Get latest revision
+        3. Catch any updates during downtime
+    end note
+    
+    Loop -> Etcd: Get(prefix)
+    Etcd -> Data: read key-values
+    Data --> Etcd: key-values + rev=102
+    Etcd --> Loop: Response[Header:rev=102, kvs:(key1,val1_new),(key3,val3)]
+    Loop -> Channel: send Added/Modified/Deleted events
+    
+    note over Loop, Data
+        Resume watch from new revision
+    end note
+    Loop -> Etcd: Watch(prefix, rev=102)
+    Etcd --> Loop: watch stream established
+end
+
+note across LIGHT_PURPLE
+    <b>Event Consistency Guaranteed:
+    - List returns all key-values + revision atomically
+    - Watch starts from listed revision
+    - No events missed between List and Watch
+end note
+
+@enduml
