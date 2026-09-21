@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
@@ -29,16 +30,25 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  */
 class Demo_1_1_BrokerRegistration extends ZookeeperTestHarness {
 
-    // TRY IT: add a fourth broker. Nothing else changes — registration is self-service.
-    private static final ProcessId BROKER_1 = ProcessId.of("broker-1");
-    private static final ProcessId BROKER_2 = ProcessId.of("broker-2");
-    private static final ProcessId BROKER_3 = ProcessId.of("broker-3");
+    // TRY IT: add ProcessId.of("broker-4") to this list. It registers itself and nothing else
+    //         in the demo changes — registration is self-service, and the assertions below are
+    //         derived from the list rather than written out.
+    private static final List<ProcessId> BROKERS = List.of(
+            ProcessId.of("broker-1"), ProcessId.of("broker-2"), ProcessId.of("broker-3"));
+
+    /** The broker whose ZooKeeper session we end, to watch its znode vanish with it. */
+    private static final ProcessId LOSES_SESSION = BROKERS.get(BROKERS.size() - 1);
+
+    /** brokerIdOf is inherited from ZookeeperTestHarness. */
+    private static Set<Integer> allBrokerIds() {
+        return BROKERS.stream().map(ZookeeperTestHarness::brokerIdOf).collect(Collectors.toSet());
+    }
 
     @Test
     @DisplayName("1.1 · brokers register as ephemeral znodes; the session is the lease")
     void brokersRegisterThemselvesAndVanishWithTheirSession() throws Exception {
         // One config, one ZooKeeper session, one port per broker — as in a real deployment.
-        Map<ProcessId, Config> configs = configsFor(BROKER_1, BROKER_2, BROKER_3);
+        Map<ProcessId, Config> configs = configsFor(BROKERS.toArray(new ProcessId[0]));
 
         try (Cluster cluster = new Cluster()
                 .withProcessIds(List.copyOf(configs.keySet()))
@@ -56,15 +66,17 @@ class Demo_1_1_BrokerRegistration extends ZookeeperTestHarness {
             cluster.tickUntil(cluster::areAllNodesInitialized);
 
             printRegistry(cluster, "after startup");
-            assertEquals(Set.of(1, 2, 3), registry(cluster));
+            assertEquals(allBrokerIds(), registry(cluster));
 
             // ---- 2. a broker dies. No goodbye, no shutdown hook.
-            System.out.println("\n--- ending broker-3's ZooKeeper session (no graceful leave) ---");
-            cluster.<BrokerServer>getNode(BROKER_3).zookeeper().close();
+            System.out.println("\n--- ending " + LOSES_SESSION.name() + "'s ZooKeeper session (no graceful leave) ---");
+            cluster.<BrokerServer>getNode(LOSES_SESSION).zookeeper().close();
 
             // ---- 3. the znode goes with the session
-            cluster.tickUntil(() -> registry(cluster).equals(Set.of(1, 2)));
-            printRegistry(cluster, "after broker-3's session ended");
+            Set<Integer> survivors = new java.util.HashSet<>(allBrokerIds());
+            survivors.remove(brokerIdOf(LOSES_SESSION));
+            cluster.tickUntil(() -> registry(cluster).equals(survivors));
+            printRegistry(cluster, "after " + LOSES_SESSION.name() + "'s session ended");
 
             System.out.println("""
 
@@ -77,13 +89,13 @@ class Demo_1_1_BrokerRegistration extends ZookeeperTestHarness {
         }
     }
 
-    /** Any observer's view of the core — read here through broker-1's ZooKeeper connection. */
+    /** Any observer's view of the core — read through the first broker's ZooKeeper connection. */
     private static Set<Integer> registry(Cluster cluster) {
-        return cluster.<BrokerServer>getNode(BROKER_1).zookeeper().getAllBrokerIds();
+        return cluster.<BrokerServer>getNode(BROKERS.get(0)).zookeeper().getAllBrokerIds();
     }
 
     private static void printRegistry(Cluster cluster, String label) {
-        ZookeeperClient zk = cluster.<BrokerServer>getNode(BROKER_1).zookeeper();
+        ZookeeperClient zk = cluster.<BrokerServer>getNode(BROKERS.get(0)).zookeeper();
         System.out.println("\n--- /brokers/ids " + label + " ---");
         zk.getAllBrokers().stream()
                 .sorted(java.util.Comparator.comparingInt(b -> b.id()))

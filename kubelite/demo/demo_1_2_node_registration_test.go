@@ -22,8 +22,11 @@ import (
 //   flow declaratively through the API Server, which acts as the sole gatekeeper,
 //   validator, and writer to the Consistent Core.
 //
-// TRY IT: Register a second node "worker-node-2" — both appear as independent
-// persistent records under /registry/nodes/ in etcd.
+// TRY IT: add "worker-node-2" to nodeNames below. Each kubelet registers itself through the
+// API server and appears as its own record under /registry/nodes/ — nothing else in this demo
+// changes, because every step below is driven from the list.
+var nodeNames = []string{"worker-node-1"}
+
 func TestDemo_1_2_NodeRegistration(t *testing.T) {
 	printBanner("DEMO 1.2: NODE REGISTRATION WITH ETCD (KUBELET -> API SERVER -> ETCD)")
 
@@ -31,40 +34,46 @@ func TestDemo_1_2_NodeRegistration(t *testing.T) {
 	etcdStorage := startEmbeddedEtcd(t)
 	apiServer := startAPIServer(t, etcdStorage)
 
-	nodeName := "worker-node-1"
-	etcdKey := "/registry/nodes/" + nodeName
+	etcdKeyFor := func(name string) string { return "/registry/nodes/" + name }
 
-	// 1. Inspect Consistent Core before Kubelet starts
-	fmt.Println("\n--- 1. etcd state before Kubelet starts ---")
-	var beforeNode api.Node
-	err := etcdStorage.Get(ctx, etcdKey, &beforeNode)
-	require.Error(t, err, "Node should not exist in etcd yet")
-	fmt.Printf("  Key '%s' exists: false\n", etcdKey)
+	// 1. Inspect Consistent Core before any Kubelet starts
+	fmt.Println("\n--- 1. etcd state before Kubelets start ---")
+	for _, name := range nodeNames {
+		var beforeNode api.Node
+		err := etcdStorage.Get(ctx, etcdKeyFor(name), &beforeNode)
+		require.Error(t, err, "Node %s should not exist in etcd yet", name)
+		fmt.Printf("  Key '%s' exists: false\n", etcdKeyFor(name))
+	}
 
-	// 2. Worker node boots up and runs Kubelet
-	fmt.Printf("\n--- 2. Kubelet starts for '%s' ---\n", nodeName)
-	k := kubelet.NewKubeletWithClient(nodeName, apiServer.Listener.Addr().String(), nil)
+	// 2 & 3. Each worker boots a Kubelet, which registers via POST /api/v1/nodes.
+	//        Nothing coordinates them — registration is self-service, exactly as in Demo 1.1.
+	for _, name := range nodeNames {
+		fmt.Printf("\n--- 2. Kubelet starts for '%s' ---\n", name)
+		k := kubelet.NewKubeletWithClient(name, apiServer.Listener.Addr().String(), nil)
 
-	// 3. Kubelet registers with API Server via POST /api/v1/nodes
-	fmt.Println("\n--- 3. Kubelet sends HTTP POST /api/v1/nodes ---")
-	err = k.RegisterNode()
-	require.NoError(t, err)
-	fmt.Printf("  ✅ API Server accepted registration (201 Created)\n")
+		fmt.Printf("--- 3. Kubelet '%s' sends HTTP POST /api/v1/nodes ---\n", name)
+		err := k.RegisterNode()
+		require.NoError(t, err)
+		fmt.Printf("  ✅ API Server accepted registration (201 Created)\n")
+	}
 
-	// 4. Verify record in etcd
+	// 4. Verify every record landed in etcd
 	fmt.Printf("\n--- 4. Inspecting Consistent Core (etcd) directly ---\n")
-	var storedNode api.Node
-	err = etcdStorage.Get(ctx, etcdKey, &storedNode)
-	require.NoError(t, err)
-	assert.Equal(t, nodeName, storedNode.Name)
-	assert.Equal(t, api.NodeReady, storedNode.Status)
+	for _, name := range nodeNames {
+		var storedNode api.Node
+		err := etcdStorage.Get(ctx, etcdKeyFor(name), &storedNode)
+		require.NoError(t, err)
+		assert.Equal(t, name, storedNode.Name)
+		assert.Equal(t, api.NodeReady, storedNode.Status)
 
-	payload, _ := json.MarshalIndent(storedNode, "  ", "  ")
-	fmt.Printf("  etcd key: %s\n", etcdKey)
-	fmt.Printf("  payload:\n  %s\n", string(payload))
+		payload, _ := json.MarshalIndent(storedNode, "  ", "  ")
+		fmt.Printf("  etcd key: %s\n", etcdKeyFor(name))
+		fmt.Printf("  payload:\n  %s\n", string(payload))
+	}
 
 	printNarration("what succeeded", `The Kubelet registered itself with the Consistent Core (etcd) through
 the Kubernetes API server. The node status is 'Ready', and its record is
-persistently stored under /registry/nodes/worker-node-1 for the scheduler
-and controllers to discover. Notice that Kubelet never touched etcd directly.`)
+persistently stored under /registry/nodes/<name> for the scheduler and
+controllers to discover. Notice that no Kubelet ever touched etcd directly,
+and that nothing coordinated them — each registered itself.`)
 }

@@ -1,0 +1,32 @@
+# Build artifacts
+build/
+bin/
+out/
+.gradle/
+*.class
+*.jar
+# ...but the Gradle wrapper jar must ship: without it a fresh clone cannot run
+# ./gradlew at all (ClassNotFoundException: GradleWrapperMain). Committing it is
+# what lets someone build with no Gradle installed, which is the wrapper's whole point.
+!gradle/wrapper/gradle-wrapper.jar
+
+# Go
+*.exe
+*.test
+*.prof
+etcdtest/
+
+# Nix / devbox — bangaloreworkshop had 13,577 .go toolchain files committed. Never again.
+.devbox/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# OS
+.DS_Store
+
+# Test scratch
+test-data/
+*.log

@@ -25,8 +25,18 @@ import (
 //	BIND                — write the chosen node onto the pod in etcd. Nothing
 //	                      is scheduled until that write lands.
 //
-// TRY IT: flip worker-node-4 to api.NodeReady and re-run — it survives FILTER
-// and, being empty, immediately wins SCORE.
+// TRY IT: flip worker-node-4 to api.NodeReady in schedulerNodes below and re-run — it survives
+// FILTER and, being empty, immediately wins SCORE. Add a fifth node while you are there. The
+// assertions are derived from this table rather than naming nodes, so the demo follows it.
+var schedulerNodes = []struct {
+	name   string
+	status api.NodeStatus
+}{
+	{"worker-node-1", api.NodeReady},
+	{"worker-node-2", api.NodeReady},
+	{"worker-node-3", api.NodeReady},
+	{"worker-node-4", api.NodeNotReady}, // Kubelet stopped reporting
+}
 func TestDemo_2_4_Scheduler(t *testing.T) {
 	printBanner("DEMO 2.4: SCHEDULING ALGORITHM (FILTER -> SCORE -> BIND)")
 
@@ -39,15 +49,7 @@ func TestDemo_2_4_Scheduler(t *testing.T) {
 
 	// 1. Four nodes — one of them unhealthy, so FILTER has something to do.
 	fmt.Println("\n--- 1. Registering worker nodes ---")
-	for _, n := range []struct {
-		name   string
-		status api.NodeStatus
-	}{
-		{"worker-node-1", api.NodeReady},
-		{"worker-node-2", api.NodeReady},
-		{"worker-node-3", api.NodeReady},
-		{"worker-node-4", api.NodeNotReady}, // Kubelet stopped reporting
-	} {
+	for _, n := range schedulerNodes {
 		require.NoError(t, nodeRegistry.CreateNode(ctx,
 			&api.Node{ObjectMeta: api.ObjectMeta{Name: n.name}, Status: n.status}))
 		fmt.Printf("  %-15s Status=%s\n", n.name, n.status)
@@ -79,8 +81,19 @@ func TestDemo_2_4_Scheduler(t *testing.T) {
 		}
 		fmt.Printf("  %-15s %s\n", node.Name, verdict)
 	}
-	require.Len(t, feasible, 3, "the NotReady node must be eliminated")
-	assert.False(t, containsNode(feasible, "worker-node-4"))
+	ready := 0
+	for _, n := range schedulerNodes {
+		if n.status == api.NodeReady {
+			ready++
+		}
+	}
+	require.Len(t, feasible, ready, "FILTER keeps the Ready nodes and eliminates the rest")
+	for _, n := range schedulerNodes {
+		if n.status == api.NodeNotReady {
+			assert.False(t, containsNode(feasible, n.name),
+				"a NotReady node must not survive FILTER: %s", n.name)
+		}
+	}
 
 	// 4. SCORE — every feasible node is empty, so all tie at the ceiling.
 	fmt.Println("\n--- 4. SCORE phase (priorities: LeastPods) ---")
@@ -97,7 +110,11 @@ func TestDemo_2_4_Scheduler(t *testing.T) {
 	printPodTable("  Bound in etcd:", scheduled)
 	for _, pod := range scheduled {
 		assert.Equal(t, api.PodScheduled, pod.Status)
-		assert.NotEqual(t, "worker-node-4", pod.NodeName, "nothing may land on a NotReady node")
+		for _, n := range schedulerNodes {
+			if n.status == api.NodeNotReady {
+				assert.NotEqual(t, n.name, pod.NodeName, "nothing may land on a NotReady node")
+			}
+		}
 	}
 
 	fmt.Println("\n--- 6. One node is now loaded — watch the ranking move ---")
