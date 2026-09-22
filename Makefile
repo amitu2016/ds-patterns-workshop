@@ -1,4 +1,4 @@
-.PHONY: help build test test-java test-go demos clean check-anchors check-script script-index
+.PHONY: help build test test-java test-go demos clean check-anchors check-demos check-script script-index
 
 help:
 	@echo "litesystems — small, faithful models of real distributed systems"
@@ -41,6 +41,9 @@ check-script:
 	@if [ ! -f tools/check-script-timing.py ]; then \
 	  echo "speaking script not present - skipping timing check"; exit 0; fi; \
 	python3 tools/check-script-timing.py docs/script $(WPM) $(FILL)
+
+check-demos:
+	@python3 tools/check-demos-index.py
 
 script-index:
 	@if [ ! -f tools/script-index.py ]; then \

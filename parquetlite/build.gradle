@@ -1,0 +1,21 @@
+dependencies {
+    // Reads byte ranges from objectstorelite via InputFile — see WORKSHOP-PLAN.md §3.6
+    implementation project(':objectstorelite')
+
+    // Parquet dependencies for columnar file encoding, footer metadata, and range reads
+    implementation 'org.apache.parquet:parquet-common:1.13.1'
+    implementation 'org.apache.parquet:parquet-encoding:1.13.1'
+    implementation 'org.apache.parquet:parquet-column:1.13.1'
+    implementation 'org.apache.parquet:parquet-hadoop:1.13.1'
+    implementation('org.apache.hadoop:hadoop-common:3.3.6') {
+        // Exclude large or conflicting transitive dependencies not needed for Parquet Path/Configuration
+        exclude group: 'org.slf4j', module: 'slf4j-reload4j'
+        exclude group: 'ch.qos.reload4j', module: 'reload4j'
+    }
+    implementation('org.apache.hadoop:hadoop-mapreduce-client-core:3.3.6') {
+        exclude group: 'org.slf4j', module: 'slf4j-reload4j'
+        exclude group: 'ch.qos.reload4j', module: 'reload4j'
+    }
+
+    testImplementation "io.github.unmeshjoshi:tickloom-testkit:${tickloomVersion}"
+}

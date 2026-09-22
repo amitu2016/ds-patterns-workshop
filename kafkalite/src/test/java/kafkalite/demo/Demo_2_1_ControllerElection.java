@@ -37,7 +37,8 @@ class Demo_2_1_ControllerElection extends ZookeeperTestHarness {
     private static final List<ProcessId> BROKERS = List.of(
             ProcessId.of("broker-1"),
             ProcessId.of("broker-2"),
-            ProcessId.of("broker-3"));
+            ProcessId.of("broker-3"),
+            ProcessId.of("broker-4"));
 
     /** The broker ids every cache should converge on: 1..N for N brokers. */
     private static Set<Integer> expectedBrokerIds() {

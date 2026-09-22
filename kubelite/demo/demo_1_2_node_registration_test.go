@@ -17,15 +17,16 @@ import (
 // SLIDE: Consistent Core Interface & Cluster Primitives
 //
 // Contrast with Kafka (Demo 1.1):
-//   In Kafka, brokers connect directly to ZooKeeper and create ephemeral znodes.
-//   In Kubernetes, worker nodes NEVER talk directly to etcd. All state transitions
-//   flow declaratively through the API Server, which acts as the sole gatekeeper,
-//   validator, and writer to the Consistent Core.
+//
+//	In Kafka, brokers connect directly to ZooKeeper and create ephemeral znodes.
+//	In Kubernetes, worker nodes NEVER talk directly to etcd. All state transitions
+//	flow declaratively through the API Server, which acts as the sole gatekeeper,
+//	validator, and writer to the Consistent Core.
 //
 // TRY IT: add "worker-node-2" to nodeNames below. Each kubelet registers itself through the
 // API server and appears as its own record under /registry/nodes/ — nothing else in this demo
 // changes, because every step below is driven from the list.
-var nodeNames = []string{"worker-node-1"}
+var nodeNames = []string{"worker-node-1", "worker-node-2"}
 
 func TestDemo_1_2_NodeRegistration(t *testing.T) {
 	printBanner("DEMO 1.2: NODE REGISTRATION WITH ETCD (KUBELET -> API SERVER -> ETCD)")

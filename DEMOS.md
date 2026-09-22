@@ -26,8 +26,21 @@ own and is answered by another.
 | 3.1 | **What breaks when a node is added** | `kafkalite` | %3→%4: how many of 10,000 keys move | ✅ **built** |
 | 3.2 | Fixing the partition count | `kafkalite` | 12 partitions / 3 nodes; add node 4 → only P4,P8,P12 move | ✅ **built** |
 | 3.3 | Topic Creation uses fixed number of partitions | `kafkalite` | Replica assignment across brokers | ✅ **built** |
+| 3.4 | Parquet Data Organization: Row Groups & Column Chunks | `parquetlite` | Footer dump: row groups, column chunks, min/max stats | ✅ **built** |
+| 3.5 | Parquet + Distributed Processing | `parquetlite` | Pushdown: row groups skipped; **exact bytes read** before/after | ✅ **built** |
+| 4.1 | Parquet to RDD Mapping | `sparklite` | One row group → one RDD partition | ✅ **built** |
+| 4.2 | End-to-End Spark + Parquet Execution | `sparklite` | DAG → stages → tasks across workers | ✅ **built** |
+| 4.3 | Spark's Parquet Integration | `sparklite` | Data locality: task scheduled where the row group lives | ✅ **built** |
+| 5.1 | Object key → erasure set | `objectstorelite` | CRCMOD vs SIPMOD set mapping | ✅ **built** |
+| 5.2 | **Why Erasure Coding** | `objectstorelite` | *without*: 3× replication, lose 2 of 3 → gone, 3× cost | ✅ **built** |
+| 5.3 | Reed-Solomon Encode and Reconstruct | `objectstorelite` | *with*: RS(4,2), delete any 2 of 6 → reconstructs, 1.5× cost | ✅ **built** |
+| 5.4 | Shard layout & versioned metadata | `objectstorelite` | On-disk shards + xl.meta-style version entries | ✅ **built** |
 | 6.1 | **Writes above the high-watermark** | `kafkalite` | *without*: read offset 1, leader dies, value vanishes · *with*: blocked at HW | ✅ **built** |
 | 6.2 | Consistency - HighWaterMark | `kafkalite` | HW advances across ticks as replicas fetch over MessageBus | ✅ **built** |
+| 6.3 | **The Object Store Problem** | `deltalite/step1` | A transfer spans two files; a reader between them sees money vanish | ✅ **built** |
+| 6.4 | Transaction Log Solution | `deltalite/step2` | Files written but uncommitted stay invisible; one log entry publishes both | ✅ **built** |
+| 6.5 | **Optimistic Transaction Flow** | `deltalite/step3` | *without*: overwritable version loses a commit silently · *with*: second writer rejected, retries | ✅ **built** |
+| 6.6 | Time Travel Queries | `deltalite/step4` | Read table as of version N | ✅ **built** |
 
 ## The without/with pattern
 

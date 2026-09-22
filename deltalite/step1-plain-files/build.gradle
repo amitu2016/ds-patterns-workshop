@@ -1,0 +1,7 @@
+dependencies {
+    // Delta is Parquet files plus a log. Step 1 has the files and no log — that is the point.
+    implementation 'org.apache.parquet:parquet-avro:1.12.3'
+    implementation 'org.apache.avro:avro:1.11.0'
+    implementation 'org.apache.hadoop:hadoop-common:3.3.6'
+    implementation 'org.apache.hadoop:hadoop-mapreduce-client-core:3.3.6'
+}

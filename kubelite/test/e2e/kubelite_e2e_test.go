@@ -47,7 +47,7 @@ func createReplicaSet(t *testing.T, cluster *TestCluster) (*api.ReplicaSet, erro
 			Name: "example-replicaset",
 		},
 		Spec: api.ReplicaSetSpec{
-			Replicas: 3,
+			Replicas: 4,
 			Selector: map[string]string{
 				"app": "example-app",
 			},
@@ -137,12 +137,12 @@ func setupTestCluster(t *testing.T) *TestCluster {
 	schdlr := scheduler.NewScheduler(registry.NewPodRegistry(etcdStorage), registry.NewNodeRegistry(etcdStorage), 1*time.Second)
 	go schdlr.Start(ctx)
 
-	kubelets, err := startKubelets(serverURL, 3, t)
+	kubelets, err := startKubelets(serverURL, 5, t)
 	if err != nil {
 		t.Fatalf("Failed to start kubelets: %v", err)
 	}
 
-	err = waitForKubeletRegistration(serverURL, 3)
+	err = waitForKubeletRegistration(serverURL, 5)
 	if err != nil {
 		t.Fatalf("Kubelet registration failed: %v", err)
 	}

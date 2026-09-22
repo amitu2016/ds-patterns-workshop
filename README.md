@@ -3,7 +3,7 @@
 Small, faithful, runnable models of the systems the workshop is about. Every demo you see on
 screen is in here, and every one of them runs on your laptop in seconds.
 
-This checkout holds: Cassandra, Kafka and Kubernetes
+This checkout holds: Cassandra, Delta Lake, Kafka, MinIO, Parquet, Spark and Kubernetes
 
 Companion code for the *Design Patterns of Distributed Systems* workshop, and for
 [*Patterns of Distributed Systems*](https://martinfowler.com/books/patterns-distributed.html).
@@ -24,7 +24,7 @@ the simulated clock means nothing waits on real time.
 
 ## What you are looking at
 
-Each directory models one real system and is named for it: `cassandralite`, `kafkalite`, `kubelite`.
+Each directory models one real system and is named for it: `cassandralite`, `deltalite`, `kafkalite`, `objectstorelite`, `parquetlite`, `sparklite`, `kubelite`.
 
 Two rules shaped all of them.
 

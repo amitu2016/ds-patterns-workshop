@@ -1,0 +1,6 @@
+// Bottom of the stack: nothing depends on. Erasure coding + erasure sets + storage nodes.
+// Backblaze Reed-Solomon engine vendored in com.backblaze.erasure (MIT license preserved).
+dependencies {
+    implementation 'com.fasterxml.jackson.core:jackson-databind:2.17.0'
+    testRuntimeOnly 'ch.qos.logback:logback-classic:1.5.6'
+}
