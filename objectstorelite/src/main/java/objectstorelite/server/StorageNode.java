@@ -25,9 +25,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.*;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
 
 import static objectstorelite.protocol.ObjectStoreProtocol.*;
 
@@ -282,9 +279,7 @@ public class StorageNode extends Replica {
             long shardSize = shards[0].length;
             String versionId = UUID.randomUUID().toString();
 
-            AtomicInteger acks = new AtomicInteger(0);
-            AtomicInteger fails = new AtomicInteger(0);
-            AtomicBoolean completed = new AtomicBoolean(false);
+            PutShardQuorumCallback callback = new PutShardQuorumCallback(msg, request, versionId, ds, ps);
 
             List<ProcessId> nodes = set.nodes();
             for (int i = 0; i < nodes.size(); i++) {
@@ -293,22 +288,7 @@ public class StorageNode extends Replica {
                 byte[] shardData = shards[shardIndex];
                 ShardMetadata meta = new ShardMetadata(shardIndex, shardSize, request.data().length, ds, ps);
                 PutShardRequest shardReq = new PutShardRequest(request.bucket(), request.key(), versionId, shardIndex, shardData, meta);
-
-                TickCompletableFuture<PutShardResponse> f = sendInternalRequest(shardReq, targetNode, PUT_SHARD);
-                f.whenComplete((resp, ex) -> {
-                    if (ex == null && resp != null && resp.success()) {
-                        if (acks.incrementAndGet() >= ds && completed.compareAndSet(false, true)) {
-                            PutObjectResponse clientResp = PutObjectResponse.ok(request.bucket(), request.key(), versionId);
-                            sendClientResponse(msg, clientResp, PUT_OBJECT_RESPONSE);
-                        }
-                    } else {
-                        int fCount = fails.incrementAndGet();
-                        if (fCount > ps && completed.compareAndSet(false, true)) {
-                            PutObjectResponse clientResp = PutObjectResponse.fail(request.bucket(), request.key(), "Write quorum not met");
-                            sendClientResponse(msg, clientResp, PUT_OBJECT_RESPONSE);
-                        }
-                    }
-                });
+                sendInternalRequest(shardReq, targetNode, PUT_SHARD, callback);
             }
         } catch (Exception e) {
             logger.warn("{}: Failed to coordinate PutObject encoding: {}", id, e.getMessage());
@@ -323,30 +303,10 @@ public class StorageNode extends Replica {
 
     private void checkObjectExists(String bucket, String key, ErasureSet set, ExistsCallback callback) {
         List<ProcessId> nodes = set.nodes();
-        AtomicInteger checked = new AtomicInteger(0);
-        AtomicBoolean found = new AtomicBoolean(false);
-        AtomicBoolean completed = new AtomicBoolean(false);
-
+        CheckExistsCallback existsCb = new CheckExistsCallback(nodes.size(), callback);
         for (ProcessId node : nodes) {
             GetMetaRequest metaReq = new GetMetaRequest(bucket, key);
-            TickCompletableFuture<GetMetaResponse> f = sendInternalRequest(metaReq, node, GET_META);
-            f.whenComplete((resp, ex) -> {
-                int c = checked.incrementAndGet();
-                if (ex == null && resp != null && resp.exists() && resp.latestVersion() != null) {
-                    VersionEntry latest = resp.latestVersion();
-                    if (!latest.deleted() && found.compareAndSet(false, true)) {
-                        if (completed.compareAndSet(false, true)) {
-                            callback.onResult(true, null);
-                        }
-                        return;
-                    }
-                }
-                if (c >= nodes.size() && !found.get()) {
-                    if (completed.compareAndSet(false, true)) {
-                        callback.onResult(false, null);
-                    }
-                }
-            });
+            sendInternalRequest(metaReq, node, GET_META, existsCb);
         }
     }
 
@@ -394,52 +354,12 @@ public class StorageNode extends Replica {
             int ds = (totalShards == dataShards + parityShards) ? dataShards : (totalShards * 2 / 3);
             int ps = totalShards - ds;
 
-            byte[][] shards = new byte[totalShards][];
-            boolean[] shardPresent = new boolean[totalShards];
-            AtomicInteger available = new AtomicInteger(0);
-            AtomicInteger failed = new AtomicInteger(0);
-            AtomicBoolean completed = new AtomicBoolean(false);
-            AtomicLong objSize = new AtomicLong(-1);
-
+            GetShardQuorumCallback shardCb = new GetShardQuorumCallback(totalShards, ds, ps, callback);
             List<ProcessId> nodes = set.nodes();
             for (int i = 0; i < nodes.size(); i++) {
                 ProcessId targetNode = nodes.get(i);
-                int shardIndex = i;
-                GetShardRequest shardReq = GetShardRequest.full(bucket, key, null, shardIndex);
-
-                TickCompletableFuture<GetShardResponse> f = sendInternalRequest(shardReq, targetNode, GET_SHARD);
-                f.whenComplete((resp, ex) -> {
-                    if (ex == null && resp != null && resp.success()) {
-                        shards[shardIndex] = resp.shardData();
-                        shardPresent[shardIndex] = true;
-                        if (resp.metadata() != null) {
-                            objSize.compareAndSet(-1, resp.metadata().objectSize());
-                        }
-                        int count = available.incrementAndGet();
-                        if (count >= ds && completed.compareAndSet(false, true)) {
-                            try {
-                                long size = objSize.get();
-                                if (size < 0) {
-                                    for (byte[] s : shards) {
-                                        if (s != null) {
-                                            size = (long) s.length * ds;
-                                            break;
-                                        }
-                                    }
-                                }
-                                byte[] reconstructed = ErasureCodec.decode(shards, shardPresent, size, ds, ps);
-                                callback.onResult(reconstructed, null);
-                            } catch (Exception e) {
-                                callback.onResult(null, e.getMessage());
-                            }
-                        }
-                    } else {
-                        int fCount = failed.incrementAndGet();
-                        if (fCount > ps && completed.compareAndSet(false, true)) {
-                            callback.onResult(null, "Read quorum failed: " + fCount + " nodes unavailable");
-                        }
-                    }
-                });
+                GetShardRequest shardReq = GetShardRequest.full(bucket, key, null, i);
+                sendInternalRequest(shardReq, targetNode, GET_SHARD, shardCb);
             }
         } catch (Exception e) {
             callback.onResult(null, e.getMessage());
@@ -452,25 +372,10 @@ public class StorageNode extends Replica {
         try {
             ErasureSet set = mapper.setFor(request.key());
             List<ProcessId> nodes = set.nodes();
-            AtomicInteger checked = new AtomicInteger(0);
-            AtomicBoolean found = new AtomicBoolean(false);
-
+            GetObjectSizeCallback sizeCb = new GetObjectSizeCallback(msg, request, nodes.size());
             for (ProcessId node : nodes) {
                 GetMetaRequest metaReq = new GetMetaRequest(request.bucket(), request.key());
-                TickCompletableFuture<GetMetaResponse> f = sendInternalRequest(metaReq, node, GET_META);
-                f.whenComplete((resp, ex) -> {
-                    int c = checked.incrementAndGet();
-                    if (ex == null && resp != null && resp.exists() && resp.latestVersion() != null) {
-                        VersionEntry latest = resp.latestVersion();
-                        if (!latest.deleted() && found.compareAndSet(false, true)) {
-                            sendClientResponse(msg, GetObjectSizeResponse.ok(request.bucket(), request.key(), latest.objectSize()), GET_OBJECT_SIZE_RESPONSE);
-                            return;
-                        }
-                    }
-                    if (c >= nodes.size() && !found.get()) {
-                        sendClientResponse(msg, GetObjectSizeResponse.fail(request.bucket(), request.key(), "Object not found or deleted"), GET_OBJECT_SIZE_RESPONSE);
-                    }
-                });
+                sendInternalRequest(metaReq, node, GET_META, sizeCb);
             }
         } catch (Exception e) {
             sendClientResponse(msg, GetObjectSizeResponse.fail(request.bucket(), request.key(), e.getMessage()), GET_OBJECT_SIZE_RESPONSE);
@@ -493,27 +398,10 @@ public class StorageNode extends Replica {
             // ListKeys to brokers and Spark workers, which have no handler for it, and the
             // listing would silently miss whatever those ticks were waiting on.
             List<ProcessId> nodes = mapper.allNodes();
-            Set<String> union = java.util.concurrent.ConcurrentHashMap.newKeySet();
-            AtomicInteger answered = new AtomicInteger(0);
-            AtomicBoolean replied = new AtomicBoolean(false);
-
+            ListKeysCallback listCb = new ListKeysCallback(msg, request, nodes.size());
             for (ProcessId node : nodes) {
                 ListKeysRequest keysReq = new ListKeysRequest(request.bucket(), request.prefix());
-                TickCompletableFuture<ListKeysResponse> f = sendInternalRequest(keysReq, node, LIST_KEYS);
-                f.whenComplete((resp, ex) -> {
-                    if (ex == null && resp != null && resp.success()) {
-                        union.addAll(resp.keys());
-                    }
-                    // Reply once every node has answered. A node that fails contributes
-                    // nothing rather than failing the whole listing — the same degraded-read
-                    // posture the erasure coding takes.
-                    if (answered.incrementAndGet() >= nodes.size() && replied.compareAndSet(false, true)) {
-                        List<String> keys = new java.util.ArrayList<>(union);
-                        java.util.Collections.sort(keys);
-                        sendClientResponse(msg, ListObjectsResponse.ok(request.bucket(), request.prefix(), keys),
-                                LIST_OBJECTS_RESPONSE);
-                    }
-                });
+                sendInternalRequest(keysReq, node, LIST_KEYS, listCb);
             }
         } catch (Exception e) {
             sendClientResponse(msg, ListObjectsResponse.fail(request.bucket(), request.prefix(), e.getMessage()),
@@ -555,19 +443,14 @@ public class StorageNode extends Replica {
         try {
             ErasureSet set = mapper.setFor(request.key());
             String versionId = UUID.randomUUID().toString();
-            AtomicInteger acks = new AtomicInteger(0);
-            AtomicBoolean completed = new AtomicBoolean(false);
+            int totalShards = set.size();
+            int ds = (totalShards == dataShards + parityShards) ? dataShards : (totalShards * 2 / 3);
+            int ps = totalShards - ds;
 
+            DeleteShardQuorumCallback deleteCb = new DeleteShardQuorumCallback(msg, request, versionId, ds, ps);
             for (ProcessId node : set.nodes()) {
                 DeleteShardRequest shardReq = new DeleteShardRequest(request.bucket(), request.key(), versionId);
-                TickCompletableFuture<DeleteShardResponse> f = sendInternalRequest(shardReq, node, DELETE_SHARD);
-                f.whenComplete((resp, ex) -> {
-                    if (ex == null && resp != null && resp.success()) {
-                        if (acks.incrementAndGet() >= dataShards && completed.compareAndSet(false, true)) {
-                            sendClientResponse(msg, DeleteObjectResponse.ok(request.bucket(), request.key(), versionId), DELETE_OBJECT_RESPONSE);
-                        }
-                    }
-                });
+                sendInternalRequest(shardReq, node, DELETE_SHARD, deleteCb);
             }
         } catch (Exception e) {
             sendClientResponse(msg, DeleteObjectResponse.fail(request.bucket(), request.key(), e.getMessage()), DELETE_OBJECT_RESPONSE);
@@ -583,21 +466,10 @@ public class StorageNode extends Replica {
         }
     }
 
-    private <T> TickCompletableFuture<T> sendInternalRequest(Object request, ProcessId destination, MessageType messageType) {
+    @SuppressWarnings("unchecked")
+    private void sendInternalRequest(Object request, ProcessId destination, MessageType messageType, RequestCallback<?> callback) {
         String correlationId = idGen.generateCorrelationId("internal");
-        TickCompletableFuture<T> future = new TickCompletableFuture<>();
-        waitingList.add(correlationId, new RequestCallback<Object>() {
-            @SuppressWarnings("unchecked")
-            @Override
-            public void onResponse(Object response, ProcessId fromNode) {
-                future.complete((T) response);
-            }
-
-            @Override
-            public void onError(Exception error) {
-                future.fail(error);
-            }
-        });
+        waitingList.add(correlationId, (RequestCallback<Object>) callback);
 
         Message msg = createMessage(destination, correlationId, request, messageType);
         try {
@@ -605,7 +477,297 @@ public class StorageNode extends Replica {
         } catch (IOException e) {
             waitingList.handleError(correlationId, e);
         }
-        return future;
+    }
+
+    // =========================================================================
+    // RequestWaitingList Callbacks for Scatter-Gather Coordinator Operations
+    // =========================================================================
+
+    private class PutShardQuorumCallback implements RequestCallback<PutShardResponse> {
+        private final Message clientMsg;
+        private final PutObjectRequest request;
+        private final String versionId;
+        private final int requiredAcks;
+        private final int maxFailures;
+        private int acks = 0;
+        private int failures = 0;
+        private boolean completed = false;
+
+        PutShardQuorumCallback(Message clientMsg, PutObjectRequest request, String versionId, int requiredAcks, int maxFailures) {
+            this.clientMsg = clientMsg;
+            this.request = request;
+            this.versionId = versionId;
+            this.requiredAcks = requiredAcks;
+            this.maxFailures = maxFailures;
+        }
+
+        @Override
+        public void onResponse(PutShardResponse resp, ProcessId fromNode) {
+            if (completed) return;
+            if (resp != null && resp.success()) {
+                acks++;
+                if (acks >= requiredAcks) {
+                    completed = true;
+                    sendClientResponse(clientMsg, PutObjectResponse.ok(request.bucket(), request.key(), versionId), PUT_OBJECT_RESPONSE);
+                }
+            } else {
+                handleFailure("Write quorum not met");
+            }
+        }
+
+        @Override
+        public void onError(Exception error) {
+            if (completed) return;
+            handleFailure(error != null ? error.getMessage() : "Write quorum not met");
+        }
+
+        private void handleFailure(String error) {
+            failures++;
+            if (failures > maxFailures) {
+                completed = true;
+                sendClientResponse(clientMsg, PutObjectResponse.fail(request.bucket(), request.key(), error), PUT_OBJECT_RESPONSE);
+            }
+        }
+    }
+
+    private static class CheckExistsCallback implements RequestCallback<GetMetaResponse> {
+        private final int totalNodes;
+        private final ExistsCallback callback;
+        private int checked = 0;
+        private boolean completed = false;
+
+        CheckExistsCallback(int totalNodes, ExistsCallback callback) {
+            this.totalNodes = totalNodes;
+            this.callback = callback;
+        }
+
+        @Override
+        public void onResponse(GetMetaResponse resp, ProcessId fromNode) {
+            if (completed) return;
+            checked++;
+            if (resp != null && resp.exists() && resp.latestVersion() != null) {
+                VersionEntry latest = resp.latestVersion();
+                if (!latest.deleted()) {
+                    completed = true;
+                    callback.onResult(true, null);
+                    return;
+                }
+            }
+            if (checked >= totalNodes) {
+                completed = true;
+                callback.onResult(false, null);
+            }
+        }
+
+        @Override
+        public void onError(Exception error) {
+            if (completed) return;
+            checked++;
+            if (checked >= totalNodes) {
+                completed = true;
+                callback.onResult(false, null);
+            }
+        }
+    }
+
+    private static class GetShardQuorumCallback implements RequestCallback<GetShardResponse> {
+        private final int ds;
+        private final int ps;
+        private final ObjectFetchCallback clientCallback;
+        private final byte[][] shards;
+        private final boolean[] shardPresent;
+        private int available = 0;
+        private int failed = 0;
+        private boolean completed = false;
+        private long objSize = -1;
+
+        GetShardQuorumCallback(int totalShards, int ds, int ps, ObjectFetchCallback clientCallback) {
+            this.ds = ds;
+            this.ps = ps;
+            this.clientCallback = clientCallback;
+            this.shards = new byte[totalShards][];
+            this.shardPresent = new boolean[totalShards];
+        }
+
+        @Override
+        public void onResponse(GetShardResponse resp, ProcessId fromNode) {
+            if (completed) return;
+            if (resp != null && resp.success()) {
+                int shardIndex = resp.shardIndex();
+                shards[shardIndex] = resp.shardData();
+                shardPresent[shardIndex] = true;
+                if (resp.metadata() != null && objSize < 0) {
+                    objSize = resp.metadata().objectSize();
+                }
+                available++;
+                if (available >= ds) {
+                    completed = true;
+                    try {
+                        long size = objSize;
+                        if (size < 0) {
+                            for (byte[] s : shards) {
+                                if (s != null) {
+                                    size = (long) s.length * ds;
+                                    break;
+                                }
+                            }
+                        }
+                        byte[] reconstructed = ErasureCodec.decode(shards, shardPresent, size, ds, ps);
+                        clientCallback.onResult(reconstructed, null);
+                    } catch (Exception e) {
+                        clientCallback.onResult(null, e.getMessage());
+                    }
+                }
+            } else {
+                handleFailure("Failed to read shard");
+            }
+        }
+
+        @Override
+        public void onError(Exception error) {
+            if (completed) return;
+            handleFailure(error != null ? error.getMessage() : "Failed to read shard");
+        }
+
+        private void handleFailure(String error) {
+            failed++;
+            if (failed > ps) {
+                completed = true;
+                clientCallback.onResult(null, "Read quorum failed: " + failed + " nodes unavailable");
+            }
+        }
+    }
+
+    private class GetObjectSizeCallback implements RequestCallback<GetMetaResponse> {
+        private final Message clientMsg;
+        private final GetObjectSizeRequest request;
+        private final int totalNodes;
+        private int checked = 0;
+        private boolean completed = false;
+
+        GetObjectSizeCallback(Message clientMsg, GetObjectSizeRequest request, int totalNodes) {
+            this.clientMsg = clientMsg;
+            this.request = request;
+            this.totalNodes = totalNodes;
+        }
+
+        @Override
+        public void onResponse(GetMetaResponse resp, ProcessId fromNode) {
+            if (completed) return;
+            checked++;
+            if (resp != null && resp.exists() && resp.latestVersion() != null) {
+                VersionEntry latest = resp.latestVersion();
+                if (!latest.deleted()) {
+                    completed = true;
+                    sendClientResponse(clientMsg, GetObjectSizeResponse.ok(request.bucket(), request.key(), latest.objectSize()), GET_OBJECT_SIZE_RESPONSE);
+                    return;
+                }
+            }
+            if (checked >= totalNodes) {
+                completed = true;
+                sendClientResponse(clientMsg, GetObjectSizeResponse.fail(request.bucket(), request.key(), "Object not found or deleted"), GET_OBJECT_SIZE_RESPONSE);
+            }
+        }
+
+        @Override
+        public void onError(Exception error) {
+            if (completed) return;
+            checked++;
+            if (checked >= totalNodes) {
+                completed = true;
+                sendClientResponse(clientMsg, GetObjectSizeResponse.fail(request.bucket(), request.key(), "Object not found or deleted"), GET_OBJECT_SIZE_RESPONSE);
+            }
+        }
+    }
+
+    private class ListKeysCallback implements RequestCallback<ListKeysResponse> {
+        private final Message clientMsg;
+        private final ListObjectsRequest request;
+        private final int totalNodes;
+        private final Set<String> union = new HashSet<>();
+        private int answered = 0;
+        private boolean completed = false;
+
+        ListKeysCallback(Message clientMsg, ListObjectsRequest request, int totalNodes) {
+            this.clientMsg = clientMsg;
+            this.request = request;
+            this.totalNodes = totalNodes;
+        }
+
+        @Override
+        public void onResponse(ListKeysResponse resp, ProcessId fromNode) {
+            if (completed) return;
+            if (resp != null && resp.success()) {
+                union.addAll(resp.keys());
+            }
+            answered++;
+            if (answered >= totalNodes) {
+                finish();
+            }
+        }
+
+        @Override
+        public void onError(Exception error) {
+            if (completed) return;
+            answered++;
+            if (answered >= totalNodes) {
+                finish();
+            }
+        }
+
+        private void finish() {
+            completed = true;
+            List<String> keys = new ArrayList<>(union);
+            Collections.sort(keys);
+            sendClientResponse(clientMsg, ListObjectsResponse.ok(request.bucket(), request.prefix(), keys), LIST_OBJECTS_RESPONSE);
+        }
+    }
+
+    private class DeleteShardQuorumCallback implements RequestCallback<DeleteShardResponse> {
+        private final Message clientMsg;
+        private final DeleteObjectRequest request;
+        private final String versionId;
+        private final int requiredAcks;
+        private final int maxFailures;
+        private int acks = 0;
+        private int failures = 0;
+        private boolean completed = false;
+
+        DeleteShardQuorumCallback(Message clientMsg, DeleteObjectRequest request, String versionId, int requiredAcks, int maxFailures) {
+            this.clientMsg = clientMsg;
+            this.request = request;
+            this.versionId = versionId;
+            this.requiredAcks = requiredAcks;
+            this.maxFailures = maxFailures;
+        }
+
+        @Override
+        public void onResponse(DeleteShardResponse resp, ProcessId fromNode) {
+            if (completed) return;
+            if (resp != null && resp.success()) {
+                acks++;
+                if (acks >= requiredAcks) {
+                    completed = true;
+                    sendClientResponse(clientMsg, DeleteObjectResponse.ok(request.bucket(), request.key(), versionId), DELETE_OBJECT_RESPONSE);
+                }
+            } else {
+                handleFailure("Failed to delete shard");
+            }
+        }
+
+        @Override
+        public void onError(Exception error) {
+            if (completed) return;
+            handleFailure(error != null ? error.getMessage() : "Failed to delete shard");
+        }
+
+        private void handleFailure(String error) {
+            failures++;
+            if (failures > maxFailures) {
+                completed = true;
+                sendClientResponse(clientMsg, DeleteObjectResponse.fail(request.bucket(), request.key(), error), DELETE_OBJECT_RESPONSE);
+            }
+        }
     }
 
     private void handlePutShardResponse(Message msg) {
