@@ -34,7 +34,7 @@ class Demo_1_1_BrokerRegistration extends ZookeeperTestHarness {
     //         in the demo changes — registration is self-service, and the assertions below are
     //         derived from the list rather than written out.
     private static final List<ProcessId> BROKERS = List.of(
-            ProcessId.of("broker-1"), ProcessId.of("broker-2"), ProcessId.of("broker-3"), ProcessId.of("broker-4"));
+            ProcessId.of("broker-1"), ProcessId.of("broker-2"), ProcessId.of("broker-3"), ProcessId.of("broker-4"),  ProcessId.of("broker-5"));
 
     /** The broker whose ZooKeeper session we end, to watch its znode vanish with it. */
     private static final ProcessId LOSES_SESSION = BROKERS.get(BROKERS.size() - 1);
