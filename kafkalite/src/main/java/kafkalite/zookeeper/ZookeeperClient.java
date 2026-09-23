@@ -32,7 +32,7 @@ import java.util.Set;
  * <p><b>Read this before deciding the class is too big.</b> Real {@code KafkaZkClient} is
  * roughly 2000 lines and is one class for every subsystem's ZooKeeper access — brokers,
  * topics, the controller, ISR, configs, ACLs, delegation tokens. This class grows the same
- * way, deliberately, so the real source is recognisable. Sections are folded by topic;
+ * way, deliberately, so the real source is recognizable. Sections are folded by topic;
  * collapse all and expand the one being taught.
  *
  * <p>Every method here is a synchronous ZooKeeper call. Watches registered through the
